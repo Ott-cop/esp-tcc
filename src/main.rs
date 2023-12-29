@@ -5,9 +5,10 @@ use esp_idf_svc::hal::gpio::PinDriver;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::reset::restart;
 use esp_idf_svc::http::Method;
-use esp_idf_svc::http::server::{EspHttpServer, HandlerError};
+use esp_idf_svc::http::server::{EspHttpServer, HandlerError, Connection};
 use esp_idf_svc::log::EspLogger;
 use esp_idf_svc::nvs::{EspNvsPartition, EspNvs, NvsCustom, EspCustomNvsPartition};
+use esp_idf_svc::sys::vTaskDelay;
 use esp_idf_svc::timer::EspTaskTimerService;
 use esp_idf_svc::wifi::{EspWifi, AsyncWifi, ClientConfiguration, Configuration, AuthMethod};
 use esp_idf_svc::{eventloop::EspSystemEventLoop, nvs::EspDefaultNvsPartition};
@@ -19,7 +20,7 @@ use log::info;
 const SSID: &str = "Apollo_2.4G";
 const PASSWORD: &str = "apollo_tplink*#";
 const STACK_SIZE: usize = 12288;
-const MAX_STR_LEN: usize = 100;
+const MAX_STR_LEN: usize = 200;
 
 
 fn main() {
@@ -37,6 +38,7 @@ fn main() {
         sys_loop,
         timer_service
     ).unwrap();
+
     unsafe {
         esp_idf_svc::sys::esp_task_wdt_deinit();
         esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE);
@@ -64,45 +66,61 @@ fn main() {
         comp_8: "".to_string(),
     };
     let data = data.dump();
+    // let mut res = String::new();
+    // let value: String = match nvs_data.clone().lock().unwrap().get_str(comp_tag, &mut buffer_data) {
+    //     std::result::Result::Ok(v) => {
 
-    let value: String = match nvs_data.lock().unwrap().get_str(comp_tag, &mut buffer_data) {
-        std::result::Result::Ok(v) => {
-            if v.is_some() {
-                let trimmed_v = v.unwrap().trim_end_matches(char::from(0));
-                trimmed_v.to_string()
-            } else {
-                data
-            }
+    //         if v.is_some() {
+    //             let trimmed_v = v.unwrap().trim_end_matches(char::from(0));
+    //             res = trimmed_v.to_string();
+    //         } else {
+    //             res = data.clone();
+    //         }
+    //         res.clone()
+    //     }
+    //     Err(_) => {
+    //         let _ = nvs_data.clone().lock().unwrap().set_str(comp_tag, data.trim_end_matches(char::from(0)));
+    //         data.clone()
+    //     }
+    // }; 
+    let value = nvs_data.clone().lock().unwrap().get_str(comp_tag, &mut buffer_data);
+    let mut res = "";
+    if value.is_ok() {
+        let value = value.unwrap();
+        if value.is_some() {
+            res = value.unwrap();
+        } else {
+            res = data.as_str();
         }
-        Err(_) => {
-            let _ = nvs_data.lock().unwrap().set_str(comp_tag, data.trim_end_matches(char::from(0)));
-            data
-        }
-    };
-    let valor = json::parse(&value.clone()).unwrap();
-    
+        
+    }
+    let _ = nvs_data.clone().lock().unwrap().set_str(comp_tag, res.trim_end_matches(char::from(0)));
+
+    std::thread::sleep(Duration::from_secs(3));
+    let valor = Arc::new(Mutex::new(json::parse(&res).unwrap()));
+    let valor2 = valor.clone();
     let comp_1 = Arc::new(Mutex::new(PinDriver::output(peripherals.pins.gpio2).unwrap()));
     let comp_2 = Arc::new(Mutex::new(PinDriver::output(peripherals.pins.gpio13).unwrap()));
     
-    if valor["comp_1"] == JsonValue::String("on".to_string()) {
+    if valor.lock().unwrap()["comp_1"] == JsonValue::String("on".to_string()) {
         comp_1.lock().unwrap().set_high().unwrap();
     } else {
          comp_1.lock().unwrap().set_low().unwrap();
     }
-    if valor["comp_2"] == JsonValue::String("on".to_string()) {
+    if valor.lock().unwrap()["comp_2"] == JsonValue::String("on".to_string()) {
         comp_2.lock().unwrap().set_high().unwrap();
     } else {
         comp_2.lock().unwrap().set_low().unwrap();
     }
 
-    unsafe {
-        esp_idf_svc::sys::esp_task_wdt_deinit();
-        esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE);
-    } 
-
-    server.fn_handler("/", Method::Get, move |mut req| {
+    let nvs_storage = nvs_data.clone();
+    let nvs_storage2 = nvs_data.clone();
+    server.fn_handler("/", Method::Post, move |mut req| {
+        let mut nvs_storage = nvs_storage.lock().unwrap();
+        let mut valor = valor2.lock().unwrap();
         let mut buffer = [0u8; MAX_STR_LEN];
-        let _ = req.read(&mut buffer);
+        req.read(&mut buffer).unwrap();       
+        
         let mut comp_1 = comp_1.lock().unwrap();
         let mut comp_2 = comp_2.lock().unwrap();
 
@@ -116,22 +134,58 @@ fn main() {
 
         if json_data["comp_1"] == JsonValue::String("on".to_string()) {
             comp_1.set_high().unwrap();
-        } else {
+            valor["comp_1"] = JsonValue::String("on".to_string());
+        } else if json_data["comp_1"] == JsonValue::String("off".to_string()) {
             comp_1.set_low().unwrap();
+            valor["comp_1"] = JsonValue::String("off".to_string());
         }
         if json_data["comp_2"] == JsonValue::String("on".to_string()) {
             comp_2.set_high().unwrap();
-        } else {
+            valor["comp_2"] = JsonValue::String("on".to_string());
+        } else if json_data["comp_2"] == JsonValue::String("off".to_string()) {
             comp_2.set_low().unwrap();
+            valor["comp_2"] = JsonValue::String("off".to_string());
         }
+        
         unsafe { esp_idf_svc::sys::vTaskDelay(10) };
-        let _ = nvs_data.lock().unwrap().set_str(comp_tag, json_data.dump().trim_end_matches(char::from(0)));
+        let _ = nvs_storage.set_str(comp_tag, valor.dump().trim_end_matches(char::from(0)));
         unsafe { esp_idf_svc::sys::vTaskDelay(10) };
-
+        let mut response_buffer: [u8; MAX_STR_LEN] = [0; MAX_STR_LEN];
+        
+        unsafe { esp_idf_svc::sys::vTaskDelay(10) };
+        println!("{:?}", nvs_storage.get_str(comp_tag, &mut response_buffer));
+        let response_data = nvs_storage.get_str(comp_tag, &mut response_buffer).unwrap().unwrap();
+        unsafe { esp_idf_svc::sys::vTaskDelay(10) };
+        
+        let initiate = req.connection().initiate_response(200, None, &[("Content-Type", "application/json")]);
+        match initiate {
+            Ok(_) => {println!("The message was successfully sent!")},
+            Err(_) => {println!("There was a problem sending the message!")}
+        }
+        req.connection().write(response_data.trim_end_matches(char::from(0)).as_bytes()).unwrap();
+       
         Result::Ok(())
         
-    }).unwrap();
+    }).unwrap()
+    .fn_handler("/", Method::Get, move |mut req| {
+        
+        let mut response_buffer: [u8; MAX_STR_LEN] = [0; MAX_STR_LEN];
 
+        unsafe { esp_idf_svc::sys::vTaskDelay(10) };
+        
+        let response_data = nvs_storage2.lock().unwrap().get_str(comp_tag, &mut response_buffer).unwrap().unwrap();
+        unsafe { esp_idf_svc::sys::vTaskDelay(10) };
+        
+        println!("Value = {:?}", response_data);
+        let initiate = req.connection().initiate_response(200, None, &[("Content-Type", "application/json")]);
+        match initiate {
+            Ok(_) => {println!("The message was successfully sent!")},
+            Err(_) => {println!("There was a problem sending the message!")}
+        }
+        req.connection().write(response_data.trim_end_matches(char::from(0)).as_bytes()).unwrap();
+
+        Result::Ok(())
+    }).unwrap();
 
    
 
@@ -141,26 +195,12 @@ fn main() {
     
 
     loop {
-        unsafe { esp_idf_svc::sys::vTaskDelay(10) };
-
-        unsafe {
-            esp_idf_svc::sys::esp_task_wdt_deinit();
-            esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE);
-        } 
-        
-        let scan = wifi.get_configuration();
-        println!("{:?}", scan);
-        let compare = Configuration::Client(ClientConfiguration {
-            ssid: SSID.into(),
-            password: PASSWORD.into(),
-            channel: None,
-            ..Default::default()
-        });
-        if scan.unwrap() == compare {
+        unsafe { vTaskDelay(10) }
+        if !wifi.is_connected().unwrap() {
+            println!("There was a problem with the WiFi connection");
             restart();
         }
-        unsafe { esp_idf_svc::sys::vTaskDelay(10) };
-    
+        unsafe { vTaskDelay(10) }
     }
 }
 
