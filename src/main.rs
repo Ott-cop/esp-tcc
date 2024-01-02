@@ -66,38 +66,25 @@ fn main() {
         comp_8: "".to_string(),
     };
     let data = data.dump();
-    // let mut res = String::new();
-    // let value: String = match nvs_data.clone().lock().unwrap().get_str(comp_tag, &mut buffer_data) {
-    //     std::result::Result::Ok(v) => {
-
-    //         if v.is_some() {
-    //             let trimmed_v = v.unwrap().trim_end_matches(char::from(0));
-    //             res = trimmed_v.to_string();
-    //         } else {
-    //             res = data.clone();
-    //         }
-    //         res.clone()
-    //     }
-    //     Err(_) => {
-    //         let _ = nvs_data.clone().lock().unwrap().set_str(comp_tag, data.trim_end_matches(char::from(0)));
-    //         data.clone()
-    //     }
-    // }; 
-    let value = nvs_data.clone().lock().unwrap().get_str(comp_tag, &mut buffer_data);
-    let mut res = "";
-    if value.is_ok() {
-        let value = value.unwrap();
-        if value.is_some() {
-            res = value.unwrap();
-        } else {
-            res = data.as_str();
+    
+    let value: String = match nvs_data.clone().lock().unwrap().get_str(comp_tag, &mut buffer_data) {
+        std::result::Result::Ok(v) => {
+            
+            if v.is_some() {
+                let trimmed_v = v.unwrap().trim_end_matches(char::from(0));
+                trimmed_v.to_string()
+            } else {
+                data.clone()
+            }
         }
-        
-    }
-    let _ = nvs_data.clone().lock().unwrap().set_str(comp_tag, res.trim_end_matches(char::from(0)));
+        Err(_) => {
+            let _ = nvs_data.clone().lock().unwrap().set_str(comp_tag, data.trim_end_matches(char::from(0)));
+            data.clone()
+        }
+    }; 
 
     std::thread::sleep(Duration::from_secs(3));
-    let valor = Arc::new(Mutex::new(json::parse(&res).unwrap()));
+    let valor = Arc::new(Mutex::new(json::parse(&value.trim_end_matches(char::from(0))).unwrap()));
     let valor2 = valor.clone();
     let comp_1 = Arc::new(Mutex::new(PinDriver::output(peripherals.pins.gpio2).unwrap()));
     let comp_2 = Arc::new(Mutex::new(PinDriver::output(peripherals.pins.gpio13).unwrap()));
@@ -153,7 +140,7 @@ fn main() {
         let mut response_buffer: [u8; MAX_STR_LEN] = [0; MAX_STR_LEN];
         
         unsafe { esp_idf_svc::sys::vTaskDelay(10) };
-        println!("{:?}", nvs_storage.get_str(comp_tag, &mut response_buffer));
+        // println!("{:?}", nvs_storage.get_str(comp_tag, &mut response_buffer));
         let response_data = nvs_storage.get_str(comp_tag, &mut response_buffer).unwrap().unwrap();
         unsafe { esp_idf_svc::sys::vTaskDelay(10) };
         
@@ -182,7 +169,13 @@ fn main() {
             Ok(_) => {println!("The message was successfully sent!")},
             Err(_) => {println!("There was a problem sending the message!")}
         }
-        req.connection().write(response_data.trim_end_matches(char::from(0)).as_bytes()).unwrap();
+        loop {
+            let value = req.connection().write(response_data.trim_end_matches(char::from(0)).as_bytes());
+            if value.is_ok() {
+                break;
+            }
+        }
+        
 
         Result::Ok(())
     }).unwrap();
