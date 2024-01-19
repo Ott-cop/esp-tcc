@@ -36,7 +36,7 @@ fn main() {
     let mut wifi = AsyncWifi::wrap(
         EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs)).unwrap(),
         sys_loop,
-        timer_service
+        timer_service.clone()
     ).unwrap();
 
     unsafe {
@@ -104,7 +104,7 @@ fn main() {
     let nvs_storage = nvs_data.clone();
     let nvs_storage2 = nvs_data.clone();
 
-    server.fn_handler("/", Method::Post, move |mut req| {
+    server.fn_handler("/", Method::Put, move |mut req| {
         let mut nvs_storage = nvs_storage.lock().unwrap();
         let mut json_value = json_value2.lock().unwrap();
         let mut buffer = [0u8; MAX_STR_LEN];
@@ -145,7 +145,7 @@ fn main() {
         
         let response_data = nvs_storage.get_str(comp_tag, &mut response_buffer).unwrap().unwrap();
         unsafe { esp_idf_svc::sys::vTaskDelay(10) };
-        
+    
         let initiate = req.connection().initiate_response(200, None, &[("Content-Type", "application/json")]);
         match initiate {
             Ok(_) => {println!("The message was successfully sent!")},
@@ -158,14 +158,13 @@ fn main() {
     }).unwrap()
     .fn_handler("/", Method::Get, move |mut req| {
         
-        
+        let mut response_buffer = [0u8; MAX_STR_LEN];
         let nvs_storage = nvs_storage2.lock().unwrap();
         unsafe { esp_idf_svc::sys::vTaskDelay(10) };
-        let mut response_buffer = [0u8; MAX_STR_LEN];
+        
         let response_data = nvs_storage.get_str(comp_tag, &mut response_buffer).unwrap().unwrap();
         unsafe { esp_idf_svc::sys::vTaskDelay(10) };
         
-        println!("Value = {:?}", response_data);
         let initiate = req.connection().initiate_response(200, None, &[("Content-Type", "application/json")]);
         match initiate {
             Ok(_) => {println!("The message was successfully sent!")},
@@ -191,10 +190,7 @@ fn main() {
 
     loop {
         unsafe { vTaskDelay(10) }
-        if !wifi.is_connected().unwrap() {
-            println!("There was a problem with the WiFi connection");
-            restart();
-        }
+        block_on(verify_connection(&mut wifi));
         unsafe { vTaskDelay(10) }
     }
 }
@@ -236,10 +232,17 @@ async fn create_server<'a>(wifi: &mut AsyncWifi<EspWifi<'static>>) -> Result<Esp
 
     let server_configuration = esp_idf_svc::http::server::Configuration {
         stack_size: STACK_SIZE,
-        session_timeout: Duration::MAX,
+        session_timeout: Duration::ZERO,
         ..Default::default()
     };
     Ok(EspHttpServer::new(&server_configuration).unwrap())
     
 }
 
+async fn verify_connection(wifi: &mut AsyncWifi<EspWifi<'_>>) {
+    while wifi.is_connected().unwrap() == false {
+        unsafe { vTaskDelay(100) };
+        println!("There was a problem with the WiFi connection");
+        let _ = wifi.connect().await;
+    }
+}
